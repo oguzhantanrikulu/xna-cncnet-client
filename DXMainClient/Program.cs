@@ -64,7 +64,10 @@ namespace DTAClient
             // does not search those subfolders by default, and HarfBuzzSharp's resolver looks
             // beside the EXE rather than beside its managed wrapper - so without help, P/Invoke
             // calls fail with "Unable to load library 'libHarfBuzzSharp'".
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            // In this Wine/Mono environment, SetDefaultDllDirectories changes how
+            // System.Windows.Forms resolves its native P/Invoke dependencies,
+            // causing user32.dll to fail to load even though it is available.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !IsRunningUnderWine())
             {
                 static bool areSecureDllLoadingAPIsAvailable()
                 {
@@ -135,6 +138,12 @@ namespace DTAClient
         [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true, ThrowOnUnmappableChar = true)]
         [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
         private static extern IntPtr GetProcAddress([In] IntPtr hModule, [In][MarshalAs(UnmanagedType.LPStr)] string lpProcName);
+
+        private static bool IsRunningUnderWine()
+        {
+            IntPtr ntdllModuleHandle = GetModuleHandle("ntdll");
+            return ntdllModuleHandle != IntPtr.Zero && GetProcAddress(ntdllModuleHandle, "wine_get_version") != IntPtr.Zero;
+        }
 #endif
 
         private static string COMMON_LIBRARY_PATH;
