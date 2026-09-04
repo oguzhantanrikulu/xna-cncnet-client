@@ -64,10 +64,7 @@ namespace DTAClient
             // does not search those subfolders by default, and HarfBuzzSharp's resolver looks
             // beside the EXE rather than beside its managed wrapper - so without help, P/Invoke
             // calls fail with "Unable to load library 'libHarfBuzzSharp'".
-            // In this Wine/Mono environment, SetDefaultDllDirectories changes how
-            // System.Windows.Forms resolves its native P/Invoke dependencies,
-            // causing user32.dll to fail to load even though it is available.
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !IsRunningUnderWine())
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 static bool areSecureDllLoadingAPIsAvailable()
                 {
@@ -85,11 +82,6 @@ namespace DTAClient
                     return true;
                 }
 
-                if (!areSecureDllLoadingAPIsAvailable())
-                    throw new PlatformNotSupportedException("This application requires at least Windows 7 SP1 with KB4457144 (alternatively, KB2533623 or KB3063858) installed.");
-
-                SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-
                 string archSubfolder = RuntimeInformation.ProcessArchitecture switch
                 {
                     Architecture.X64 => "x64",
@@ -98,16 +90,71 @@ namespace DTAClient
                     _ => null
                 };
 
-                if (archSubfolder is not null)
+                if (IsRunningUnderWine())
                 {
-                    static void addDllDirectoryIfExists(string path)
-                    {
-                        if (Directory.Exists(path))
-                            AddDllDirectory(path);
-                    }
+                    // Wine/CrossOver: SetDefaultDllDirectories + AddDllDirectory is the correct
+                    // approach on Windows. After SetDefaultDllDirectories the process no longer
+                    // uses the standard search order (System32, Windows directory, PATH, current
+                    // directory). On Windows that is safe because user32/gdi32/... are Known DLLs
+                    // mapped from System32.
+                    //
+                    // Wine does not resolve those builtins the same way. They are placeholder
+                    // PEs plus Unix implementations found via Wine's own builtin path
+                    // (WINEDLLPATH, the Wine lib/wine tree), which is not a LOAD_LIBRARY_SEARCH_* directory.
+                    // Wine-Mono then P/Invokes user32.dll from System.Windows.Forms.Control's
+                    // type initializer and throws DllNotFoundException even though user32 is
+                    // present in the prefix. This is a Wine loader compatibility gap, not a
+                    // defect in the Windows search flags below. Wine still exports the secure
+                    // loading APIs, so the availability check below would succeed and the
+                    // restricted search would be applied — which is what breaks WinForms.
+                    //
+                    // Workaround: on Wine skip SetDefaultDllDirectories and prepend the
+                    // architecture subfolders to PATH so libHarfBuzzSharp (and similar) are
+                    // still found, while Wine's builtin search for user32/gdi32 remains intact.
+                    // AddDllDirectory is not used here because without SetDefaultDllDirectories
+                    // those directories are not part of the process default search path.
+                    //
+                    // If a future Wine/CrossOver build loads builtins correctly after
+                    // SetDefaultDllDirectories (verify with WinForms after that call, e.g.
+                    // Application.SetCompatibleTextRenderingDefault), this branch can be
+                    // removed and Wine can share the Windows path
+                    // (SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) +
+                    // AddDllDirectory). Re-test before deleting the branch; CrossOver often
+                    // lags upstream Wine.
 
-                    addDllDirectoryIfExists(Path.Combine(SPECIFIC_LIBRARY_PATH, archSubfolder));
-                    addDllDirectoryIfExists(Path.Combine(COMMON_LIBRARY_PATH, archSubfolder));
+                    if (archSubfolder is not null)
+                    {
+                        static void prependToPathIfExists(string directory)
+                        {
+                            if (!Directory.Exists(directory))
+                                return;
+
+                            string current = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+                            Environment.SetEnvironmentVariable("PATH", directory + Path.PathSeparator + current);
+                        }
+
+                        prependToPathIfExists(Path.Combine(SPECIFIC_LIBRARY_PATH, archSubfolder));
+                        prependToPathIfExists(Path.Combine(COMMON_LIBRARY_PATH, archSubfolder));
+                    }
+                }
+                else
+                {
+                    if (!areSecureDllLoadingAPIsAvailable())
+                        throw new PlatformNotSupportedException("This application requires at least Windows 7 SP1 with KB4457144 (alternatively, KB2533623 or KB3063858) installed.");
+
+                    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_APPLICATION_DIR | LOAD_LIBRARY_SEARCH_USER_DIRS | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+
+                    if (archSubfolder is not null)
+                    {
+                        static void addDllDirectoryIfExists(string path)
+                        {
+                            if (Directory.Exists(path))
+                                AddDllDirectory(path);
+                        }
+
+                        addDllDirectoryIfExists(Path.Combine(SPECIFIC_LIBRARY_PATH, archSubfolder));
+                        addDllDirectoryIfExists(Path.Combine(COMMON_LIBRARY_PATH, archSubfolder));
+                    }
                 }
             }
 #endif
