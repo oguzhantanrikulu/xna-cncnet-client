@@ -93,7 +93,7 @@ namespace DTAClient
                 if (IsRunningUnderWine())
                 {
                     // Wine and CrossOver export SetDefaultDllDirectories / AddDllDirectory,
-                    // so the availability check below succeeds. On real Windows those APIs
+                    // so areSecureDllLoadingAPIsAvailable() succeeds. On real Windows those APIs
                     // are the right way to load native libraries from
                     // SPECIFIC_LIBRARY_PATH/{arch} and COMMON_LIBRARY_PATH/{arch}:
                     // SetDefaultDllDirectories replaces the process default search path
