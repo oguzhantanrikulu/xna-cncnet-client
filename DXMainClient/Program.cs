@@ -92,35 +92,42 @@ namespace DTAClient
 
                 if (IsRunningUnderWine())
                 {
-                    // Wine/CrossOver: SetDefaultDllDirectories + AddDllDirectory is the correct
-                    // approach on Windows. After SetDefaultDllDirectories the process no longer
-                    // uses the standard search order (System32, Windows directory, PATH, current
-                    // directory). On Windows that is safe because user32/gdi32/... are Known DLLs
-                    // mapped from System32.
+                    // Wine and CrossOver export SetDefaultDllDirectories / AddDllDirectory,
+                    // so the availability check below succeeds. On real Windows those APIs
+                    // are the right way to load native libraries from
+                    // SPECIFIC_LIBRARY_PATH/{arch} and COMMON_LIBRARY_PATH/{arch}:
+                    // SetDefaultDllDirectories replaces the process default search path
+                    // with application dir + System32 + AddDllDirectory folders, which
+                    // still finds system libraries because user32.dll, gdi32.dll, and
+                    // similar are Known DLLs mapped from System32.
                     //
-                    // Wine does not resolve those builtins the same way. They are placeholder
-                    // PEs plus Unix implementations found via Wine's own builtin path
-                    // (WINEDLLPATH, the Wine lib/wine tree), which is not a LOAD_LIBRARY_SEARCH_* directory.
-                    // Wine-Mono then P/Invokes user32.dll from System.Windows.Forms.Control's
-                    // type initializer and throws DllNotFoundException even though user32 is
-                    // present in the prefix. This is a Wine loader compatibility gap, not a
-                    // defect in the Windows search flags below. Wine still exports the secure
-                    // loading APIs, so the availability check below would succeed and the
-                    // restricted search would be applied — which is what breaks WinForms.
+                    // Wine does not implement that Known-DLL behaviour. Its user32/gdi32
+                    // are placeholder PE files whose real code lives in Unix libraries
+                    // discovered through Wine's private builtin path (WINEDLLPATH /
+                    // lib/wine), which is not one of the LOAD_LIBRARY_SEARCH_* directories.
+                    // After SetDefaultDllDirectories, LoadLibrary("user32.dll") therefore
+                    // fails. The first such call is the P/Invoke inside the static
+                    // constructor of System.Windows.Forms.Control (reached from
+                    // Application.SetCompatibleTextRenderingDefault). That surfaces as
+                    // TypeInitializationException wrapping DllNotFoundException for
+                    // user32.dll, even though user32 is present in the Wine prefix.
+                    // That failure is a Wine loader gap, not incorrect flags on Windows.
                     //
-                    // Workaround: on Wine skip SetDefaultDllDirectories and prepend the
-                    // architecture subfolders to PATH so libHarfBuzzSharp (and similar) are
-                    // still found, while Wine's builtin search for user32/gdi32 remains intact.
-                    // AddDllDirectory is not used here because without SetDefaultDllDirectories
-                    // those directories are not part of the process default search path.
+                    // Workaround: when running under Wine, do not call
+                    // SetDefaultDllDirectories. Prepend the architecture subfolders to
+                    // PATH instead so libHarfBuzzSharp.dll (and similar) are still found,
+                    // while Wine's default search continues to locate user32/gdi32.
+                    // AddDllDirectory is omitted on this path because, without
+                    // SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_USER_DIRS), those
+                    // directories are not part of the process default search path.
                     //
-                    // If a future Wine/CrossOver build loads builtins correctly after
-                    // SetDefaultDllDirectories (verify with WinForms after that call, e.g.
-                    // Application.SetCompatibleTextRenderingDefault), this branch can be
-                    // removed and Wine can share the Windows path
+                    // Removal condition: if a future Wine/CrossOver build can load
+                    // user32.dll via P/Invoke after SetDefaultDllDirectories — confirm by
+                    // running through Application.SetCompatibleTextRenderingDefault —
+                    // delete this branch and use the Windows path for Wine as well
                     // (SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) +
-                    // AddDllDirectory). Re-test before deleting the branch; CrossOver often
-                    // lags upstream Wine.
+                    // AddDllDirectory). Re-test on CrossOver specifically; it often lags
+                    // upstream Wine.
 
                     if (archSubfolder is not null)
                     {
